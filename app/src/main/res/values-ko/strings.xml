@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">FloatDeck</string>
+    <string name="app_name">Shida</string>
     <string name="wallpaper_description">떠다니는 캐릭터 일러스트의 시차 배경화면</string>
     <string name="set_as_live_wallpaper">라이브 배경화면으로 설정</string>
     <string name="template_title">템플릿</string>

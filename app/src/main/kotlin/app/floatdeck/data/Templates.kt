@@ -23,6 +23,8 @@ data class TemplateDef(
     val wallpaper: String,
     val left: List<TemplateFile>,
     val right: List<TemplateFile>,
+    /** Optional full-screen foreground (subject cut-out) for depth mode. */
+    val foreground: String? = null,
 )
 
 /**
@@ -37,34 +39,37 @@ object Templates {
     /** 从文件系统目录加载模板定义（用于远程导入的模板）。 */
     fun loadTemplateFromDir(dir: File): TemplateDef? =
         try {
-            val jsonFile = File(dir, "template.json")
-            val jsonStr = jsonFile.readText()
-            val json = JSONObject(jsonStr)
-
-            val leftArr = json.getJSONObject("portraits").getJSONArray("left")
-            val rightArr = json.getJSONObject("portraits").getJSONArray("right")
-
-            val left =
-                (0 until leftArr.length()).map { i ->
-                    val obj = leftArr.getJSONObject(i)
-                    TemplateFile(obj.getString("file"), obj.getString("label"))
-                }
-            val right =
-                (0 until rightArr.length()).map { i ->
-                    val obj = rightArr.getJSONObject(i)
-                    TemplateFile(obj.getString("file"), obj.getString("label"))
-                }
-
-            TemplateDef(
-                id = json.getString("id"),
-                name = json.getString("name"),
-                wallpaper = json.getString("wallpaper"),
-                left = left,
-                right = right,
-            )
+            parseDef(JSONObject(File(dir, "template.json").readText()))
         } catch (_: Exception) {
             null
         }
+
+    /**
+     * Parses template.json. "portraits" is optional when a "foreground" layer
+     * is given (depth mode templates have no cards).
+     */
+    private fun parseDef(json: JSONObject): TemplateDef {
+        val portraits = json.optJSONObject("portraits")
+        val foreground = json.optString("foreground", "").takeIf { it.isNotBlank() }
+        require(portraits != null || foreground != null) { "template has neither portraits nor foreground" }
+
+        fun side(name: String): List<TemplateFile> {
+            val arr = portraits?.optJSONArray(name) ?: return emptyList()
+            return (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                TemplateFile(obj.getString("file"), obj.getString("label"))
+            }
+        }
+
+        return TemplateDef(
+            id = json.getString("id"),
+            name = json.getString("name"),
+            wallpaper = json.getString("wallpaper"),
+            left = side("left"),
+            right = side("right"),
+            foreground = foreground,
+        )
+    }
 
     /** 从 assets 加载模板定义，解析失败返回 null。 */
     fun loadTemplate(
@@ -77,30 +82,7 @@ object Templates {
                     .open("$TEMPLATES_DIR/$templateId/template.json")
                     .bufferedReader()
                     .use { it.readText() }
-            val json = JSONObject(jsonStr)
-
-            // 解析左右两侧的肖像列表
-            val leftArr = json.getJSONObject("portraits").getJSONArray("left")
-            val rightArr = json.getJSONObject("portraits").getJSONArray("right")
-
-            val left =
-                (0 until leftArr.length()).map { i ->
-                    val obj = leftArr.getJSONObject(i)
-                    TemplateFile(obj.getString("file"), obj.getString("label"))
-                }
-            val right =
-                (0 until rightArr.length()).map { i ->
-                    val obj = rightArr.getJSONObject(i)
-                    TemplateFile(obj.getString("file"), obj.getString("label"))
-                }
-
-            TemplateDef(
-                id = json.getString("id"),
-                name = json.getString("name"),
-                wallpaper = json.getString("wallpaper"),
-                left = left,
-                right = right,
-            )
+            parseDef(JSONObject(jsonStr))
         } catch (_: Exception) {
             null
         }
@@ -140,6 +122,7 @@ object Templates {
             name = def.name,
             wallpaperAsset = "$TEMPLATES_DIR/${def.id}/${def.wallpaper}",
             portraits = portraits,
+            foregroundAsset = def.foreground?.let { "$TEMPLATES_DIR/${def.id}/$it" },
         )
     }
 
@@ -177,6 +160,7 @@ object Templates {
             wallpaperAsset = File(templateDir, def.wallpaper).absolutePath,
             portraits = portraits,
             isRemote = true,
+            foregroundAsset = def.foreground?.let { File(templateDir, it).absolutePath },
         )
     }
 

@@ -34,7 +34,7 @@ class SettingsRepository(
     /** 当前选中的模板 ID。 */
     val templateId: Flow<String> =
         context.dataStore.data.map { prefs ->
-            prefs[KEY_TEMPLATE] ?: ""
+            prefs[KEY_TEMPLATE] ?: DepthSettings.DEFAULT_TEMPLATE_ID
         }
 
     /** 用户自定义壁纸 URI（为 null 时使用模板内置壁纸）。 */

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">FloatDeck</string>
+    <string name="app_name">Shida</string>
     <string name="wallpaper_description">Fond d\'écran parallaxe avec des portraits de personnages flottants</string>
     <string name="set_as_live_wallpaper">Définir comme fond d\'écran animé</string>
     <string name="template_title">Modèle</string>

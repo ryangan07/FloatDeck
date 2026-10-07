@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">FloatDeck</string>
+    <string name="app_name">Shida</string>
     <string name="wallpaper_description">Parallax wallpaper with floating character portraits</string>
     <string name="set_as_live_wallpaper">Set as Live Wallpaper</string>
     <string name="template_title">Template</string>
@@ -87,4 +87,12 @@
     <string name="error_template_no_portraits">template.json is missing the portraits field</string>
     <string name="error_template_json_missing">template.json not found</string>
     <string name="error_zip_failed">ZIP processing failed: %1$s</string>
+    <string name="depth_section_title">Depth effect</string>
+    <string name="depth_section_hint">Used when the template has a foreground layer. Changes apply immediately.</string>
+    <string name="depth_max_angle">Tilt for full effect: %1$d°</string>
+    <string name="depth_foreground">Subject movement: %1$.1f%%</string>
+    <string name="depth_background">Background movement: %1$.1f%%</string>
+    <string name="depth_zoom">Zoom: %1$d%%</string>
+    <string name="depth_invert">Reverse direction</string>
+    <string name="depth_reset">Reset to defaults</string>
 </resources>

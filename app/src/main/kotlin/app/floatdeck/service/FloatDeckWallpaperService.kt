@@ -11,6 +11,7 @@ import android.util.Log
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import androidx.core.content.ContextCompat
+import app.floatdeck.data.DepthSettings
 import app.floatdeck.data.RemoteTemplateLoader
 import app.floatdeck.data.TemplateDef
 import app.floatdeck.data.Templates
@@ -59,6 +60,13 @@ class FloatDeckWallpaperService : WallpaperService() {
                     val mode = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                         .getString(KEY_FRAME_RATE_MODE, "auto") ?: "auto"
                     glThread?.updateFrameRatePreference(mode)
+                }
+                in DepthSettings.KEYS -> {
+                    applyDepthSettings(
+                        DepthSettings.load(getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)),
+                        renderer,
+                        sensorHandler,
+                    )
                 }
             }
         }
@@ -114,6 +122,11 @@ class FloatDeckWallpaperService : WallpaperService() {
             // 热重载：监听设置变化
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .registerOnSharedPreferenceChangeListener(prefsListener)
+            applyDepthSettings(
+                DepthSettings.load(getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)),
+                renderer,
+                sensorHandler,
+            )
             sensorHandler.register()
         }
 
@@ -225,6 +238,19 @@ class FloatDeckWallpaperService : WallpaperService() {
 }
 
 private const val STOP_JOIN_TIMEOUT_MS = 1000L
+
+/** Pushes depth-mode tunables to the renderer and the tilt tracker. */
+internal fun applyDepthSettings(
+    settings: DepthSettings,
+    renderer: FloatDeckRenderer,
+    sensorHandler: SensorHandler,
+) {
+    renderer.depthForegroundAmount = settings.foregroundPercent / 100f
+    renderer.depthBackgroundAmount = settings.backgroundPercent / 100f
+    renderer.depthZoom = settings.zoomPercent / 100f
+    renderer.depthInvert = settings.invert
+    sensorHandler.tiltTracker.setMaxAngleDegrees(settings.maxAngleDegrees)
+}
 
 /**
  * GL 渲染线程：在壁纸 Surface 上自建 EGL 环境，以 ~60fps 循环调用渲染器。
@@ -382,6 +408,8 @@ class GLWallpaperThread(
                         (sensorHandler.rollX - renderer.smoothedRollX) * 0.08f
                     renderer.smoothedPitchY +=
                         (sensorHandler.pitchY - renderer.smoothedPitchY) * 0.08f
+                    // 景深模式：相对倾斜（以当前握持姿势为中心）
+                    renderer.setDepthTilt(sensorHandler.tiltX, sensorHandler.tiltY)
 
                     // 首帧或设置变更后重新加载模板/特效
                     if (!templateLoaded || reloadRequested) {
@@ -588,7 +616,9 @@ class GLWallpaperThread(
 
     /** 从设置读取模板 id 与特效并加载到渲染器。 */
     private fun loadConfigFromPrefs(prefs: SharedPreferences) {
-        val savedId = prefs.getString(KEY_TEMPLATE_ID, "") ?: ""
+        val savedId =
+            (prefs.getString(KEY_TEMPLATE_ID, "") ?: "")
+                .ifBlank { DepthSettings.DEFAULT_TEMPLATE_ID }
         val effectStr = prefs.getString(KEY_PORTRAIT_EFFECT, "none") ?: "none"
         renderer.portraitEffect =
             when (effectStr) {

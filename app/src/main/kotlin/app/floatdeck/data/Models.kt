@@ -44,7 +44,7 @@ data class PortraitConfig(
     val isRemote: Boolean = false,
 )
 
-/** 模板配置：包含背景图和一组肖像卡片。 */
+/** 模板配置：包含背景图和一组肖像卡片（或一张全屏前景图，用于景深模式）。 */
 data class TemplateConfig(
     val id: String,
     val name: String,
@@ -52,4 +52,6 @@ data class TemplateConfig(
     val portraits: List<PortraitConfig>,
     val isRemote: Boolean = false,
     val effect: PortraitEffect = PortraitEffect.NONE,
+    /** Optional full-screen subject layer (transparent PNG). When set, the depth mode is used instead of cards. */
+    val foregroundAsset: String? = null,
 )

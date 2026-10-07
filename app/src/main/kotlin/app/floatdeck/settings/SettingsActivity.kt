@@ -41,6 +41,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -62,6 +63,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.floatdeck.R
 import app.floatdeck.BuildConfig
+import app.floatdeck.data.DepthSettings
 import app.floatdeck.data.PortraitEffect
 import app.floatdeck.data.RemoteTemplateLoader
 import app.floatdeck.data.SettingsRepository
@@ -304,7 +306,7 @@ fun SettingsScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(title = { Text("FloatDeck") })
+            TopAppBar(title = { Text(stringResource(R.string.app_name)) })
         },
     ) { padding ->
         // Scan built-in templates from assets
@@ -401,6 +403,10 @@ fun SettingsScreen(
                     Text(stringResource(R.string.set_as_live_wallpaper))
                 }
             }
+
+            // 景深效果参数（改动即时生效）
+            item { HorizontalDivider() }
+            item { DepthSettingsSection() }
 
             // 立绘特效选择
             item { HorizontalDivider() }
@@ -786,3 +792,71 @@ fun SettingsScreen(
         }
     }
 }
+
+/** Sliders for the depth (two-layer parallax) mode; values are written straight to SharedPreferences. */
+@Composable
+private fun DepthSettingsSection() {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences(DepthSettings.PREFS_NAME, Context.MODE_PRIVATE) }
+    var settings by remember { mutableStateOf(DepthSettings.load(prefs)) }
+
+    fun update(newSettings: DepthSettings) {
+        settings = newSettings
+        newSettings.save(prefs)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(stringResource(R.string.depth_section_title), style = MaterialTheme.typography.titleMedium)
+        Text(
+            stringResource(R.string.depth_section_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(stringResource(R.string.depth_max_angle, settings.maxAngleDegrees.toInt()))
+        Slider(
+            value = settings.maxAngleDegrees,
+            onValueChange = { update(settings.copy(maxAngleDegrees = it.toInt().toFloat())) },
+            valueRange = 5f..30f,
+        )
+
+        Text(stringResource(R.string.depth_foreground, settings.foregroundPercent))
+        Slider(
+            value = settings.foregroundPercent,
+            onValueChange = { update(settings.copy(foregroundPercent = roundTenth(it))) },
+            valueRange = 0f..4f,
+        )
+
+        Text(stringResource(R.string.depth_background, settings.backgroundPercent))
+        Slider(
+            value = settings.backgroundPercent,
+            onValueChange = { update(settings.copy(backgroundPercent = roundTenth(it))) },
+            valueRange = 0f..2f,
+        )
+
+        Text(stringResource(R.string.depth_zoom, settings.zoomPercent.toInt()))
+        Slider(
+            value = settings.zoomPercent,
+            onValueChange = { update(settings.copy(zoomPercent = it.toInt().toFloat())) },
+            valueRange = 100f..115f,
+        )
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.depth_invert), modifier = Modifier.weight(1f))
+            Switch(
+                checked = settings.invert,
+                onCheckedChange = { update(settings.copy(invert = it)) },
+            )
+        }
+
+        TextButton(onClick = { update(DepthSettings()) }) {
+            Text(stringResource(R.string.depth_reset))
+        }
+    }
+}
+
+private fun roundTenth(value: Float): Float = Math.round(value * 10f) / 10f

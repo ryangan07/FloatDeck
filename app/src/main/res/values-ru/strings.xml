@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">FloatDeck</string>
+    <string name="app_name">Shida</string>
     <string name="wallpaper_description">Параллакс-обои с плавающими портретами персонажей</string>
     <string name="set_as_live_wallpaper">Установить как живые обои</string>
     <string name="template_title">Шаблон</string>

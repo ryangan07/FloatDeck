@@ -87,6 +87,38 @@ class FloatDeckRenderer(
     private val portraitStates = mutableListOf<PortraitState>()
 
     // ------------------------------------------------------------------
+    // 景深模式（背景 + 全屏前景两层视差）
+    // ------------------------------------------------------------------
+    private var foregroundTextureId = 0
+    private var foregroundPixelWidth = 1
+    private var foregroundPixelHeight = 1
+
+    /** Depth mode is active when the template provides a foreground layer. */
+    val isDepthMode: Boolean
+        get() = foregroundTextureId != 0
+
+    /** Latest relative tilt from the sensor, -1 ~ 1 (written by the GL thread each frame). */
+    @Volatile private var depthTiltTargetX = 0f
+
+    @Volatile private var depthTiltTargetY = 0f
+
+    /** Smoothed tilt actually used for drawing. */
+    private var depthTiltX = 0f
+    private var depthTiltY = 0f
+
+    /** Foreground travel as a fraction of screen width. */
+    @Volatile var depthForegroundAmount = 0.012f
+
+    /** Background travel as a fraction of screen width. */
+    @Volatile var depthBackgroundAmount = 0.005f
+
+    /** Base zoom of both layers (1.04 = 104%). */
+    @Volatile var depthZoom = 1.04f
+
+    /** Flip parallax direction. */
+    @Volatile var depthInvert = false
+
+    // ------------------------------------------------------------------
     // 传感器数值
     // ------------------------------------------------------------------
     var smoothedRollX = 0f
@@ -263,6 +295,17 @@ class FloatDeckRenderer(
         portraitStates.forEach { TextureLoader.deleteTexture(it.textureId) }
         portraitStates.clear()
         if (wallpaperTextureId != 0) TextureLoader.deleteTexture(wallpaperTextureId)
+        if (foregroundTextureId != 0) TextureLoader.deleteTexture(foregroundTextureId)
+        foregroundTextureId = 0
+
+        template.foregroundAsset?.let { path ->
+            val fgResult = if (template.isRemote) loadTextureFromPath(path) else loadFullResTexture(path)
+            if (fgResult != null) {
+                foregroundTextureId = fgResult.first
+                foregroundPixelWidth = fgResult.second
+                foregroundPixelHeight = fgResult.third
+            }
+        }
 
         val bgResult =
             if (template.isRemote && template.wallpaperAsset != null) {
@@ -382,8 +425,109 @@ class FloatDeckRenderer(
             selectRandomLayout()
         }
 
+        if (isDepthMode) {
+            updateDepthTilt()
+            drawDepthLayers()
+            return
+        }
+
         drawBackgroundLayers()
         drawPortraits()
+    }
+
+    /** Called by the GL thread every frame with the sensor's relative tilt (-1 ~ 1). */
+    fun setDepthTilt(
+        tiltX: Float,
+        tiltY: Float,
+    ) {
+        depthTiltTargetX = tiltX
+        depthTiltTargetY = tiltY
+    }
+
+    /** Frame-rate independent smoothing (~60ms time constant) to hide sensor jitter. */
+    private fun updateDepthTilt() {
+        val k = 1f - exp(-frameDeltaSeconds / DEPTH_SMOOTHING_SECONDS)
+        depthTiltX += (depthTiltTargetX - depthTiltX) * k
+        depthTiltY += (depthTiltTargetY - depthTiltY) * k
+    }
+
+    /**
+     * Depth mode: background and foreground drawn full screen with the same
+     * zoom (so they stay aligned), moving in opposite directions by different
+     * amounts. That difference is what reads as depth.
+     */
+    private fun drawDepthLayers() {
+        val sign = if (depthInvert) -1f else 1f
+        val tx = depthTiltX * sign
+        val ty = depthTiltY * sign
+        val unit = screenWidthPixels
+        val bgAmount = depthBackgroundAmount
+        val fgAmount = depthForegroundAmount
+        // Zoom must leave enough margin that the background never shows an edge
+        val zoom = maxOf(depthZoom, 1f + 2f * bgAmount + 0.002f)
+
+        drawCoverLayer(
+            wallpaperTextureId,
+            wallpaperPixelWidth,
+            wallpaperPixelHeight,
+            tx * bgAmount * unit,
+            ty * bgAmount * unit,
+            zoom,
+        )
+        drawCoverLayer(
+            foregroundTextureId,
+            foregroundPixelWidth,
+            foregroundPixelHeight,
+            -tx * fgAmount * unit,
+            -ty * fgAmount * unit,
+            zoom,
+        )
+    }
+
+    /** Draws a texture scaled to cover the screen ("center crop"), zoomed and offset. */
+    private fun drawCoverLayer(
+        textureId: Int,
+        texWidth: Int,
+        texHeight: Int,
+        offsetX: Float,
+        offsetY: Float,
+        zoom: Float,
+    ) {
+        if (textureId == 0) return
+        GLES30.glUseProgram(backgroundProgram)
+        val buffer = quadVertexBuffer ?: return
+        bindQuadAttributes(buffer)
+
+        val screenAspect = screenWidthPixels / screenHeightPixels
+        val textureAspect = texWidth.toFloat() / texHeight.toFloat()
+        val scaleFactor =
+            if (screenAspect > textureAspect) {
+                screenWidthPixels * zoom / texWidth.toFloat()
+            } else {
+                screenHeightPixels * zoom / texHeight.toFloat()
+            }
+        val drawWidth = texWidth * scaleFactor
+        val drawHeight = texHeight * scaleFactor
+
+        val mvp = FloatArray(16)
+        val model = FloatArray(16)
+        Matrix.setIdentityM(model, 0)
+        Matrix.translateM(model, 0, screenWidthPixels / 2f + offsetX, screenHeightPixels / 2f + offsetY, 0f)
+        Matrix.scaleM(model, 0, drawWidth / 2f, drawHeight / 2f, 1f)
+        Matrix.multiplyMM(mvp, 0, orthographicMatrix, 0, model, 0)
+
+        GLES30.glUniformMatrix4fv(uniformBackgroundMvp, 1, false, mvp, 0)
+        GLES30.glUniform2f(uniformBackgroundParallax, 0f, 0f)
+        if (uniformBackgroundAlpha != 0) {
+            GLES30.glUniform1f(uniformBackgroundAlpha, 1f)
+        }
+
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
+        GLES30.glUniform1i(uniformBackgroundTexture, 0)
+
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        unbindQuadAttributes()
     }
 
     /** Computes the frame delta (s) from the previous frame; clamped to avoid jumps after long stalls. */
@@ -709,6 +853,8 @@ class FloatDeckRenderer(
         portraitStates.forEach { TextureLoader.deleteTexture(it.textureId) }
         portraitStates.clear()
         if (wallpaperTextureId != 0) TextureLoader.deleteTexture(wallpaperTextureId)
+        if (foregroundTextureId != 0) TextureLoader.deleteTexture(foregroundTextureId)
+        foregroundTextureId = 0
         if (portraitProgram != 0) GLES30.glDeleteProgram(portraitProgram)
         if (backgroundProgram != 0) GLES30.glDeleteProgram(backgroundProgram)
     }
@@ -847,4 +993,8 @@ class FloatDeckRenderer(
         b: Float,
         t: Float,
     ): Float = a + (b - a) * t.coerceIn(0f, 1f)
+
+    private companion object {
+        const val DEPTH_SMOOTHING_SECONDS = 0.06f
+    }
 }

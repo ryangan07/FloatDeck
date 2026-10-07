@@ -40,9 +40,34 @@ class SensorHandler(
 
     private var registered = false
 
+    /** Relative tilt for depth mode, fed by the gyroscope (stays 0 on devices without one). */
+    val tiltTracker = TiltTracker()
+
+    /** Horizontal relative tilt, -1 ~ 1. */
+    val tiltX: Float get() = tiltTracker.normalizedHorizontal
+
+    /**
+     * Vertical relative tilt, -1 ~ 1. Negated so that tilting the top edge
+     * toward the user moves the background up (screen Y points down), the same
+     * "looking through a window" feel as the horizontal axis.
+     */
+    val tiltY: Float get() = -tiltTracker.normalizedVertical
+
+    private var lastGyroTimestampNanos = 0L
+
     /** 注册传感器监听，按优先级依次尝试旋转矢量 → 游戏旋转矢量 → 加速度计。 */
     fun register() {
         if (registered) return
+
+        // Gyroscope drives the depth-mode tilt; registered in addition to the
+        // orientation sensor below. Start centered on whatever pose the phone
+        // is held in right now.
+        tiltTracker.reset()
+        lastGyroTimestampNanos = 0L
+        sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let { gyro ->
+            sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
+            registered = true
+        }
 
         val rotationVector = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         if (rotationVector != null) {
@@ -75,6 +100,14 @@ class SensorHandler(
 
     override fun onSensorChanged(event: SensorEvent) {
         when (event.sensor.type) {
+            Sensor.TYPE_GYROSCOPE -> {
+                val last = lastGyroTimestampNanos
+                lastGyroTimestampNanos = event.timestamp
+                if (last != 0L) {
+                    val dt = (event.timestamp - last) / 1_000_000_000f
+                    tiltTracker.onGyro(event.values[0], event.values[1], dt)
+                }
+            }
             // 旋转矢量 / 游戏旋转矢量：通过旋转矩阵 → 欧拉角提取 roll 和 pitch
             Sensor.TYPE_ROTATION_VECTOR, Sensor.TYPE_GAME_ROTATION_VECTOR -> {
                 val rotationMatrix = FloatArray(9)

@@ -225,7 +225,7 @@ class RemoteTemplateLoader(
                                     R.string.error_template_no_wallpaper,
                                 )
                             }
-                            if (!templateJson.has("portraits")) {
+                            if (!templateJson.has("portraits") && !templateJson.has("foreground")) {
                                 throw TemplateLoadException(
                                     "template.json is missing the portraits field",
                                     R.string.error_template_no_portraits,
@@ -261,9 +261,18 @@ class RemoteTemplateLoader(
                         )
                     }
 
-                    val portraits = templateJson.getJSONObject("portraits")
+                    val foreground = templateJson.optString("foreground", "")
+                    if (foreground.isNotBlank() && foreground !in fileNames) {
+                        throw TemplateLoadException(
+                            "Missing foreground file: $foreground",
+                            R.string.error_missing_portrait,
+                            arrayOf(foreground),
+                        )
+                    }
+
+                    val portraits = templateJson.optJSONObject("portraits")
                     for (side in listOf("left", "right")) {
-                        val arr = portraits.optJSONArray(side) ?: continue
+                        val arr = portraits?.optJSONArray(side) ?: continue
                         for (i in 0 until arr.length()) {
                             val file = arr.getJSONObject(i).getString("file")
                             if (file !in fileNames) {
@@ -394,7 +403,7 @@ class RemoteTemplateLoader(
                     R.string.error_template_no_wallpaper,
                 )
             }
-            if (!templateJson.has("portraits")) {
+            if (!templateJson.has("portraits") && !templateJson.has("foreground")) {
                 throw TemplateLoadException(
                     "template.json is missing the portraits field",
                     R.string.error_template_no_portraits,
@@ -424,43 +433,46 @@ class RemoteTemplateLoader(
                 )
             }
 
-            val portraits = templateJson.getJSONObject("portraits")
+            val portraits = templateJson.optJSONObject("portraits")
             // Validate all portrait files before copying any.
             val portraitFiles = mutableListOf<Pair<String, File>>()
-            for (side in listOf("left", "right")) {
-                val arr = portraits.optJSONArray(side) ?: continue
-                for (i in 0 until arr.length()) {
-                    val file = arr.getJSONObject(i).getString("file")
-                    val src = safeResolveChild(sourceDir, file)
-                        ?: throw TemplateLoadException(
-                            "Illegal portrait path: $file",
-                            R.string.error_illegal_path,
-                            arrayOf(file),
-                        )
-                    if (!src.exists()) {
-                        throw TemplateLoadException(
-                            "Missing portrait file: $file",
-                            R.string.error_missing_portrait,
-                            arrayOf(file),
-                        )
-                    }
-                    val ext = file.substringAfterLast(".", "").lowercase()
-                    if (ext !in ALLOWED_EXTENSIONS) {
-                        throw TemplateLoadException(
-                            "Unsupported file type: $file",
-                            R.string.error_unsupported_file_type,
-                            arrayOf(file),
-                        )
-                    }
-                    if (src.length() > MAX_FILE_SIZE) {
-                        throw TemplateLoadException(
-                            "File too large: $file (max 10MB)",
-                            R.string.error_single_file_too_large,
-                            arrayOf(file),
-                        )
-                    }
-                    portraitFiles.add(file to src)
+            // The depth-mode foreground layer is validated and copied like a portrait.
+            val foreground = templateJson.optString("foreground", "")
+            val portraitNames =
+                listOf("left", "right").flatMap { side ->
+                    val arr = portraits?.optJSONArray(side) ?: return@flatMap emptyList()
+                    (0 until arr.length()).map { arr.getJSONObject(it).getString("file") }
+                } + listOfNotNull(foreground.takeIf { it.isNotBlank() })
+            for (file in portraitNames) {
+                val src = safeResolveChild(sourceDir, file)
+                    ?: throw TemplateLoadException(
+                        "Illegal portrait path: $file",
+                        R.string.error_illegal_path,
+                        arrayOf(file),
+                    )
+                if (!src.exists()) {
+                    throw TemplateLoadException(
+                        "Missing portrait file: $file",
+                        R.string.error_missing_portrait,
+                        arrayOf(file),
+                    )
                 }
+                val ext = file.substringAfterLast(".", "").lowercase()
+                if (ext !in ALLOWED_EXTENSIONS) {
+                    throw TemplateLoadException(
+                        "Unsupported file type: $file",
+                        R.string.error_unsupported_file_type,
+                        arrayOf(file),
+                    )
+                }
+                if (src.length() > MAX_FILE_SIZE) {
+                    throw TemplateLoadException(
+                        "File too large: $file (max 10MB)",
+                        R.string.error_single_file_too_large,
+                        arrayOf(file),
+                    )
+                }
+                portraitFiles.add(file to src)
             }
 
             val targetDir = resolveTargetDir(templateDir, templateId, overwrite)

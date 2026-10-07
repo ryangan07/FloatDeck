@@ -85,11 +85,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "app.floatdeck"
+        applicationId = "app.shida"
         minSdk = 26
         targetSdk = 36
         versionCode = 7
-        versionName = "0.4.2"
+        versionName = "0.4.2-shida.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
