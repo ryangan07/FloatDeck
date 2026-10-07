@@ -825,21 +825,21 @@ private fun DepthSettingsSection() {
         Slider(
             value = settings.foregroundPercent,
             onValueChange = { update(settings.copy(foregroundPercent = roundTenth(it))) },
-            valueRange = 0f..4f,
+            valueRange = 0f..8f,
         )
 
         Text(stringResource(R.string.depth_background, settings.backgroundPercent))
         Slider(
             value = settings.backgroundPercent,
             onValueChange = { update(settings.copy(backgroundPercent = roundTenth(it))) },
-            valueRange = 0f..2f,
+            valueRange = 0f..5f,
         )
 
         Text(stringResource(R.string.depth_zoom, settings.zoomPercent.toInt()))
         Slider(
             value = settings.zoomPercent,
             onValueChange = { update(settings.copy(zoomPercent = it.toInt().toFloat())) },
-            valueRange = 100f..115f,
+            valueRange = 100f..125f,
         )
 
         Row(
