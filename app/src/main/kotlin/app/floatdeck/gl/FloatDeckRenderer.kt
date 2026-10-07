@@ -3,8 +3,10 @@ package app.floatdeck.gl
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Typeface
 import android.opengl.GLES30
 import android.opengl.Matrix
+import app.floatdeck.data.GlassTextSettings
 import app.floatdeck.data.TemplateConfig
 import java.nio.FloatBuffer
 import kotlin.math.abs
@@ -117,6 +119,42 @@ class FloatDeckRenderer(
 
     /** Flip parallax direction. */
     @Volatile var depthInvert = false
+
+    // ------------------------------------------------------------------
+    // 玻璃文字（固定不动，夹在背景和人物之间）
+    // ------------------------------------------------------------------
+    private var glassProgram = 0
+    private var glassMaskTextureId = 0
+    private var glassMaskWidth = 1
+    private var glassMaskHeight = 1
+    private val glassRect = FloatArray(4)
+
+    @Volatile private var glassSettings = GlassTextSettings()
+
+    @Volatile private var glassDirty = true
+
+    private val glassTypeface: Typeface by lazy {
+        runCatching { Typeface.createFromAsset(context.assets, GLASS_FONT_ASSET) }
+            .getOrDefault(Typeface.DEFAULT_BOLD)
+    }
+
+    private var uniformGlassMvp = 0
+    private var uniformGlassMask = 0
+    private var uniformGlassBackground = 0
+    private var uniformGlassMaskTexel = 0
+    private var uniformGlassTextRect = 0
+    private var uniformGlassBgRect = 0
+    private var uniformGlassRefraction = 0
+    private var uniformGlassBlur = 0
+    private var uniformGlassWhite = 0
+    private var uniformGlassLight = 0
+    private var uniformGlassAlpha = 0
+
+    /** Apply new glass text settings; the texture is rebuilt on the GL thread. */
+    fun updateGlassSettings(settings: GlassTextSettings) {
+        glassSettings = settings
+        glassDirty = true
+    }
 
     // ------------------------------------------------------------------
     // 传感器数值
@@ -264,6 +302,25 @@ class FloatDeckRenderer(
         uniformBackgroundAlpha = GLES30.glGetUniformLocation(backgroundProgram, "uAlpha")
 
         quadVertexBuffer = Quad.createBuffer()
+
+        // Non-fatal: if the glass shader fails on some GPU, the wallpaper still works without it
+        glassProgram =
+            runCatching { ShaderProgram.compile(Shaders.backgroundVertex, Shaders.glassFragment) }
+                .onFailure { android.util.Log.e("FloatDeck", "Glass shader failed", it) }
+                .getOrDefault(0)
+        uniformGlassMvp = GLES30.glGetUniformLocation(glassProgram, "uMVP")
+        uniformGlassMask = GLES30.glGetUniformLocation(glassProgram, "uMask")
+        uniformGlassBackground = GLES30.glGetUniformLocation(glassProgram, "uBackground")
+        uniformGlassMaskTexel = GLES30.glGetUniformLocation(glassProgram, "uMaskTexel")
+        uniformGlassTextRect = GLES30.glGetUniformLocation(glassProgram, "uTextRect")
+        uniformGlassBgRect = GLES30.glGetUniformLocation(glassProgram, "uBgRect")
+        uniformGlassRefraction = GLES30.glGetUniformLocation(glassProgram, "uRefraction")
+        uniformGlassBlur = GLES30.glGetUniformLocation(glassProgram, "uBlurPx")
+        uniformGlassWhite = GLES30.glGetUniformLocation(glassProgram, "uWhite")
+        uniformGlassLight = GLES30.glGetUniformLocation(glassProgram, "uLight")
+        uniformGlassAlpha = GLES30.glGetUniformLocation(glassProgram, "uAlpha")
+        glassMaskTextureId = 0
+        glassDirty = true
     }
 
     fun onSurfaceChanged(
@@ -278,6 +335,7 @@ class FloatDeckRenderer(
 
         // 重置传感器校准和布局
         needsTemplateReload = true
+        glassDirty = true
     }
 
     private fun selectRandomLayout() {
@@ -466,14 +524,16 @@ class FloatDeckRenderer(
         // Zoom must leave enough margin that the background never shows an edge
         val zoom = maxOf(depthZoom, 1f + 2f * bgAmount + 0.002f)
 
-        drawCoverLayer(
-            wallpaperTextureId,
-            wallpaperPixelWidth,
-            wallpaperPixelHeight,
-            tx * bgAmount * unit,
-            ty * bgAmount * unit,
-            zoom,
-        )
+        val bgRect =
+            drawCoverLayer(
+                wallpaperTextureId,
+                wallpaperPixelWidth,
+                wallpaperPixelHeight,
+                tx * bgAmount * unit,
+                ty * bgAmount * unit,
+                zoom,
+            )
+        if (bgRect != null) drawGlassText(bgRect, tx, ty)
         drawCoverLayer(
             foregroundTextureId,
             foregroundPixelWidth,
@@ -484,7 +544,10 @@ class FloatDeckRenderer(
         )
     }
 
-    /** Draws a texture scaled to cover the screen ("center crop"), zoomed and offset. */
+    /**
+     * Draws a texture scaled to cover the screen ("center crop"), zoomed and
+     * offset. Returns the drawn rect (left, top, width, height) in screen pixels.
+     */
     private fun drawCoverLayer(
         textureId: Int,
         texWidth: Int,
@@ -492,10 +555,10 @@ class FloatDeckRenderer(
         offsetX: Float,
         offsetY: Float,
         zoom: Float,
-    ) {
-        if (textureId == 0) return
+    ): FloatArray? {
+        if (textureId == 0) return null
         GLES30.glUseProgram(backgroundProgram)
-        val buffer = quadVertexBuffer ?: return
+        val buffer = quadVertexBuffer ?: return null
         bindQuadAttributes(buffer)
 
         val screenAspect = screenWidthPixels / screenHeightPixels
@@ -525,6 +588,113 @@ class FloatDeckRenderer(
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
         GLES30.glUniform1i(uniformBackgroundTexture, 0)
+
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        unbindQuadAttributes()
+
+        val centerX = screenWidthPixels / 2f + offsetX
+        val centerY = screenHeightPixels / 2f + offsetY
+        return floatArrayOf(centerX - drawWidth / 2f, centerY - drawHeight / 2f, drawWidth, drawHeight)
+    }
+
+    /** Rebuilds the glass text texture from the current settings and screen size. */
+    private fun rebuildGlassText() {
+        glassDirty = false
+        if (glassMaskTextureId != 0) TextureLoader.deleteTexture(glassMaskTextureId)
+        glassMaskTextureId = 0
+        val settings = glassSettings
+        if (!settings.enabled || screenWidthPixels < 2f || screenHeightPixels < 2f) return
+
+        val width = (screenWidthPixels * settings.widthPercent / 100f).toInt()
+        val height = (screenHeightPixels * settings.heightPercent / 100f).toInt()
+        glassRect[0] = (screenWidthPixels - width) / 2f
+        glassRect[1] = screenHeightPixels * settings.topPercent / 100f
+        glassRect[2] = width.toFloat()
+        glassRect[3] = height.toFloat()
+
+        val bevel = (GLASS_BEVEL_REF_PX * screenWidthPixels / GLASS_REF_WIDTH).toInt().coerceAtLeast(2)
+        val result =
+            runCatching {
+                GlassTextMask.build(glassTypeface, settings.text.trim(), width, height, bevel)
+            }.onFailure { android.util.Log.e("FloatDeck", "Glass text build failed", it) }
+                .getOrNull() ?: return
+
+        val ids = IntArray(1)
+        GLES30.glGenTextures(1, ids, 0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, ids[0])
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D,
+            0,
+            GLES30.GL_RGBA,
+            result.width,
+            result.height,
+            0,
+            GLES30.GL_RGBA,
+            GLES30.GL_UNSIGNED_BYTE,
+            result.buffer,
+        )
+        glassMaskTextureId = ids[0]
+        glassMaskWidth = result.width
+        glassMaskHeight = result.height
+    }
+
+    /**
+     * Static glass word between background and subject. Lock screen only by
+     * default: fades with the lock/unlock transition like the iOS clock.
+     */
+    private fun drawGlassText(
+        bgRect: FloatArray,
+        tiltX: Float,
+        tiltY: Float,
+    ) {
+        if (glassDirty) rebuildGlassText()
+        if (glassMaskTextureId == 0 || glassProgram == 0) return
+        val settings = glassSettings
+        val alpha = if (settings.showOnHome) 1f else transitionProgress.coerceIn(0f, 1f)
+        if (alpha < 0.01f) return
+
+        GLES30.glUseProgram(glassProgram)
+        val buffer = quadVertexBuffer ?: return
+        bindQuadAttributes(buffer)
+
+        val x = glassRect[0]
+        val y = glassRect[1]
+        val w = glassRect[2]
+        val h = glassRect[3]
+        val mvp = FloatArray(16)
+        val model = FloatArray(16)
+        Matrix.setIdentityM(model, 0)
+        Matrix.translateM(model, 0, x + w / 2f, y + h / 2f, 0f)
+        Matrix.scaleM(model, 0, w / 2f, h / 2f, 1f)
+        Matrix.multiplyMM(mvp, 0, orthographicMatrix, 0, model, 0)
+
+        val scale = screenWidthPixels / GLASS_REF_WIDTH
+        var lx = -0.6f + tiltX * 0.8f
+        var ly = -0.8f + tiltY * 0.8f
+        val len = kotlin.math.sqrt(lx * lx + ly * ly).coerceAtLeast(1e-4f)
+        lx /= len
+        ly /= len
+
+        GLES30.glUniformMatrix4fv(uniformGlassMvp, 1, false, mvp, 0)
+        GLES30.glUniform2f(uniformGlassMaskTexel, 1f / glassMaskWidth, 1f / glassMaskHeight)
+        GLES30.glUniform4f(uniformGlassTextRect, x, y, w, h)
+        GLES30.glUniform4f(uniformGlassBgRect, bgRect[0], bgRect[1], bgRect[2], bgRect[3])
+        GLES30.glUniform1f(uniformGlassRefraction, settings.refraction * scale)
+        GLES30.glUniform1f(uniformGlassBlur, GLASS_BLUR_REF_PX * scale)
+        GLES30.glUniform1f(uniformGlassWhite, settings.whitePercent / 100f)
+        GLES30.glUniform2f(uniformGlassLight, lx, ly)
+        GLES30.glUniform1f(uniformGlassAlpha, alpha)
+
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, wallpaperTextureId)
+        GLES30.glUniform1i(uniformGlassBackground, 1)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, glassMaskTextureId)
+        GLES30.glUniform1i(uniformGlassMask, 0)
 
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         unbindQuadAttributes()
@@ -855,6 +1025,9 @@ class FloatDeckRenderer(
         if (wallpaperTextureId != 0) TextureLoader.deleteTexture(wallpaperTextureId)
         if (foregroundTextureId != 0) TextureLoader.deleteTexture(foregroundTextureId)
         foregroundTextureId = 0
+        if (glassMaskTextureId != 0) TextureLoader.deleteTexture(glassMaskTextureId)
+        glassMaskTextureId = 0
+        if (glassProgram != 0) GLES30.glDeleteProgram(glassProgram)
         if (portraitProgram != 0) GLES30.glDeleteProgram(portraitProgram)
         if (backgroundProgram != 0) GLES30.glDeleteProgram(backgroundProgram)
     }
@@ -996,5 +1169,12 @@ class FloatDeckRenderer(
 
     private companion object {
         const val DEPTH_SMOOTHING_SECONDS = 0.06f
+
+        const val GLASS_FONT_ASSET = "fonts/BebasNeue-Regular.ttf"
+
+        /** The approved mock-up was tuned on a 941px-wide image; pixel values scale from it. */
+        const val GLASS_REF_WIDTH = 941f
+        const val GLASS_BEVEL_REF_PX = 12f
+        const val GLASS_BLUR_REF_PX = 2.5f
     }
 }

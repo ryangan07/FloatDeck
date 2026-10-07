@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import app.floatdeck.R
 import app.floatdeck.BuildConfig
 import app.floatdeck.data.DepthSettings
+import app.floatdeck.data.GlassTextSettings
 import app.floatdeck.data.PortraitEffect
 import app.floatdeck.data.RemoteTemplateLoader
 import app.floatdeck.data.SettingsRepository
@@ -407,6 +408,10 @@ fun SettingsScreen(
             // 景深效果参数（改动即时生效）
             item { HorizontalDivider() }
             item { DepthSettingsSection() }
+
+            // 玻璃文字（夹在背景和人物之间）
+            item { HorizontalDivider() }
+            item { GlassTextSection() }
 
             // 立绘特效选择
             item { HorizontalDivider() }
@@ -860,3 +865,99 @@ private fun DepthSettingsSection() {
 }
 
 private fun roundTenth(value: Float): Float = Math.round(value * 10f) / 10f
+
+/** Settings for the static glass word drawn behind the subject. */
+@Composable
+private fun GlassTextSection() {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences(DepthSettings.PREFS_NAME, Context.MODE_PRIVATE) }
+    var settings by remember { mutableStateOf(GlassTextSettings.load(prefs)) }
+
+    fun update(newSettings: GlassTextSettings) {
+        settings = newSettings
+        newSettings.save(prefs)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                stringResource(R.string.glass_section_title),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = settings.enabled,
+                onCheckedChange = { update(settings.copy(enabled = it)) },
+            )
+        }
+        Text(
+            stringResource(R.string.glass_section_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = settings.text,
+            onValueChange = { update(settings.copy(text = it.take(GLASS_TEXT_MAX_LENGTH))) },
+            label = { Text(stringResource(R.string.glass_text)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Text(stringResource(R.string.glass_top, settings.topPercent.toInt()))
+        Slider(
+            value = settings.topPercent,
+            onValueChange = { update(settings.copy(topPercent = it.toInt().toFloat())) },
+            valueRange = 0f..80f,
+        )
+
+        Text(stringResource(R.string.glass_height, settings.heightPercent.toInt()))
+        Slider(
+            value = settings.heightPercent,
+            onValueChange = { update(settings.copy(heightPercent = it.toInt().toFloat())) },
+            valueRange = 5f..60f,
+        )
+
+        Text(stringResource(R.string.glass_width, settings.widthPercent.toInt()))
+        Slider(
+            value = settings.widthPercent,
+            onValueChange = { update(settings.copy(widthPercent = it.toInt().toFloat())) },
+            valueRange = 30f..100f,
+        )
+
+        Text(stringResource(R.string.glass_white, settings.whitePercent.toInt()))
+        Slider(
+            value = settings.whitePercent,
+            onValueChange = { update(settings.copy(whitePercent = it.toInt().toFloat())) },
+            valueRange = 0f..60f,
+        )
+
+        Text(stringResource(R.string.glass_refraction, settings.refraction.toInt()))
+        Slider(
+            value = settings.refraction,
+            onValueChange = { update(settings.copy(refraction = it.toInt().toFloat())) },
+            valueRange = 0f..30f,
+        )
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.glass_show_on_home), modifier = Modifier.weight(1f))
+            Switch(
+                checked = settings.showOnHome,
+                onCheckedChange = { update(settings.copy(showOnHome = it)) },
+            )
+        }
+
+        TextButton(onClick = { update(GlassTextSettings()) }) {
+            Text(stringResource(R.string.depth_reset))
+        }
+    }
+}
+
+private const val GLASS_TEXT_MAX_LENGTH = 16

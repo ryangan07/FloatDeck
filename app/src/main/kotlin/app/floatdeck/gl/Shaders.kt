@@ -213,4 +213,81 @@ object Shaders {
             fragColor = vec4(texColor.rgb * uAlpha, texColor.a * uAlpha);
         }
         """.trimIndent()
+
+    /**
+     * Liquid-glass text (used with [backgroundVertex] on a quad covering the
+     * text rect). The glyph is clear glass: the background behind it is
+     * refracted along the bevel normal, lightly softened and whitened, with a
+     * specular edge whose light direction follows the device tilt.
+     * Output is premultiplied alpha.
+     */
+    val glassFragment =
+        """
+        #version 300 es
+        precision highp float;
+
+        // r = coverage, g = bevel height
+        uniform sampler2D uMask;
+        uniform sampler2D uBackground;
+        uniform vec2 uMaskTexel;
+        // Screen rects (x, y, w, h) in pixels, y down
+        uniform vec4 uTextRect;
+        uniform vec4 uBgRect;
+        uniform float uRefraction;
+        uniform float uBlurPx;
+        uniform float uWhite;
+        uniform vec2 uLight;
+        uniform float uAlpha;
+
+        in vec2 vUV;
+        out vec4 fragColor;
+
+        vec3 sampleBg(vec2 screenPos) {
+            vec2 uv = (screenPos - uBgRect.xy) / uBgRect.zw;
+            return texture(uBackground, clamp(uv, 0.0, 1.0)).rgb;
+        }
+
+        void main() {
+            vec4 m = texture(uMask, vUV);
+            float cover = m.r;
+            if (cover < 0.004) {
+                discard;
+            }
+
+            float hL = texture(uMask, vUV - vec2(uMaskTexel.x, 0.0)).g;
+            float hR = texture(uMask, vUV + vec2(uMaskTexel.x, 0.0)).g;
+            float hU = texture(uMask, vUV - vec2(0.0, uMaskTexel.y)).g;
+            float hD = texture(uMask, vUV + vec2(0.0, uMaskTexel.y)).g;
+            // Slope of the bevel per screen pixel
+            vec2 grad = vec2(hR - hL, hD - hU) * 0.5;
+
+            vec2 screenPos = uTextRect.xy + vUV * uTextRect.zw;
+            vec2 p = screenPos - grad * uRefraction;
+
+            // Light softening inside the glass (9 taps)
+            float b = uBlurPx;
+            vec3 c = sampleBg(p) * 0.25;
+            c += (sampleBg(p + vec2(b, 0.0)) + sampleBg(p - vec2(b, 0.0))
+                + sampleBg(p + vec2(0.0, b)) + sampleBg(p - vec2(0.0, b))) * 0.125;
+            c += (sampleBg(p + vec2(b, b)) + sampleBg(p - vec2(b, b))
+                + sampleBg(p + vec2(b, -b)) + sampleBg(p + vec2(-b, b))) * 0.0625;
+
+            vec3 color = c * (1.0 - uWhite) + vec3(uWhite);
+
+            // Edge lighting: highlight on the side facing the light, faint glow opposite
+            vec2 n = -grad;
+            float s = length(n);
+            float w = clamp(s * 4.0, 0.0, 1.0);
+            float d = s > 1e-5 ? dot(n / s, uLight) : 0.0;
+            color += vec3(pow(max(d, 0.0), 4.0) * w * 0.75);
+            color += vec3(pow(max(-d, 0.0), 2.0) * w * 0.15);
+
+            // Thin bright rim right at the glyph outline
+            float rim = cover * (1.0 - smoothstep(0.0, 0.2, m.g));
+            color += vec3(rim * 0.28);
+
+            color = clamp(color, 0.0, 1.0);
+            fragColor = vec4(color * cover * uAlpha, cover * uAlpha);
+        }
+        """.trimIndent()
 }

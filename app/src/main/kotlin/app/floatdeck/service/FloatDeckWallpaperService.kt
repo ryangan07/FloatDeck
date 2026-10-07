@@ -12,6 +12,7 @@ import android.view.MotionEvent
 import android.view.SurfaceHolder
 import androidx.core.content.ContextCompat
 import app.floatdeck.data.DepthSettings
+import app.floatdeck.data.GlassTextSettings
 import app.floatdeck.data.RemoteTemplateLoader
 import app.floatdeck.data.TemplateDef
 import app.floatdeck.data.Templates
@@ -60,6 +61,11 @@ class FloatDeckWallpaperService : WallpaperService() {
                     val mode = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                         .getString(KEY_FRAME_RATE_MODE, "auto") ?: "auto"
                     glThread?.updateFrameRatePreference(mode)
+                }
+                in GlassTextSettings.KEYS -> {
+                    renderer.updateGlassSettings(
+                        GlassTextSettings.load(getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)),
+                    )
                 }
                 in DepthSettings.KEYS -> {
                     applyDepthSettings(
@@ -126,6 +132,9 @@ class FloatDeckWallpaperService : WallpaperService() {
                 DepthSettings.load(getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)),
                 renderer,
                 sensorHandler,
+            )
+            renderer.updateGlassSettings(
+                GlassTextSettings.load(getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)),
             )
             sensorHandler.register()
         }

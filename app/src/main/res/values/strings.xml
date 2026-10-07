@@ -95,4 +95,13 @@
     <string name="depth_zoom">Zoom: %1$d%%</string>
     <string name="depth_invert">Reverse direction</string>
     <string name="depth_reset">Reset to defaults</string>
+    <string name="glass_section_title">Glass text</string>
+    <string name="glass_section_hint">A fixed glass word between the background and the subject. Lock screen only unless enabled below.</string>
+    <string name="glass_text">Text</string>
+    <string name="glass_top">Position from top: %1$d%%</string>
+    <string name="glass_height">Height: %1$d%%</string>
+    <string name="glass_width">Width: %1$d%%</string>
+    <string name="glass_white">Whiteness: %1$d%%</string>
+    <string name="glass_refraction">Refraction: %1$d</string>
+    <string name="glass_show_on_home">Also show on home screen</string>
 </resources>
